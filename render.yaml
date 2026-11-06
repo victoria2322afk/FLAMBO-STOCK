@@ -1,23 +1,15 @@
-# Blueprint de Render: la API + frontend en un solo servicio Docker con disco persistente.
-# El disco persistente requiere un plan pago (Starter o superior): sin él, la base se borra en cada despliegue.
 services:
   - type: web
     name: flambo-stock
     runtime: docker
-    plan: starter
+    plan: free
     healthCheckPath: /api/health
-    disk:
-      name: flambo-data
-      mountPath: /data
-      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
       - key: JWT_SECRET
         generateValue: true
       - key: ADMIN_PASSWORD
-        sync: false # se pide al crear el servicio
+        sync: false
       - key: TZ_NAME
         value: America/Argentina/Buenos_Aires
-      - key: CORS_ORIGIN
-        sync: false # solo si el frontend está en otro dominio (Netlify)
