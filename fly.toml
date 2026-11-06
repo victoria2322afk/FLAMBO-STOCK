@@ -1,0 +1,38 @@
+# Fly.io. Antes del primer despliegue:
+#   fly launch --no-deploy --copy-config
+#   fly volumes create flambo_data --size 1 --region gru
+#   fly secrets set JWT_SECRET="$(openssl rand -base64 48)" ADMIN_PASSWORD="una-clave-inicial"
+#   fly deploy
+# SQLite funciona con UNA sola máquina: no escales a más de una.
+app = "flambo-stock"
+primary_region = "gru" # São Paulo, la más cercana a Argentina
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+  TZ_NAME = "America/Argentina/Buenos_Aires"
+
+[mounts]
+  source = "flambo_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "15s"
+    method = "GET"
+    path = "/api/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

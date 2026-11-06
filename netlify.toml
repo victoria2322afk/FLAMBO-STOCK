@@ -1,0 +1,4 @@
+# Netlify publica solo el frontend (no hay paso de compilación).
+# La API corre en otro servicio (Render, Fly, un VPS…): su dirección se pone en frontend/config.js.
+[build]
+  publish = "frontend"

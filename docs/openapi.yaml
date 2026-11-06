@@ -1,0 +1,263 @@
+openapi: 3.0.3
+info:
+  title: Flambo Stock API
+  version: 1.0.0
+  description: |
+    API del control de stock de Flambo. Todas las rutas (salvo `/api/health` y `/api/auth/login`) requieren
+    `Authorization: Bearer <token>`. Los errores tienen la forma `{ "error": { "code": "...", "message": "..." } }`.
+    Las semanas son de lunes a sábado y se cierran solas el domingo a las 00:00 (hora local configurada);
+    una semana cerrada es de solo lectura (409 `week_closed`).
+    Mientras el usuario tenga `mustChangePassword`, solo funcionan `/api/auth/me` y `/api/auth/change-password`
+    (el resto responde 403 `password_change_required`).
+servers:
+  - url: http://localhost:3000
+security:
+  - bearer: []
+tags:
+  - { name: Sistema }
+  - { name: Autenticación }
+  - { name: Sucursales }
+  - { name: Usuarios }
+  - { name: Catálogo }
+  - { name: Semanas }
+  - { name: Excel }
+  - { name: Reportes }
+  - { name: Auditoría }
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    id: { name: id, in: path, required: true, schema: { type: integer, minimum: 1 } }
+    weekId: { name: weekId, in: query, required: true, schema: { type: integer, minimum: 1 } }
+    branchIdQ: { name: branchId, in: query, schema: { type: integer, minimum: 1 }, description: "Admin: sucursal a consultar (vacío = todas). Empleado: se ignora/solo la suya." }
+    weeksQ: { name: weeks, in: query, schema: { type: integer, minimum: 1, maximum: 52 } }
+  responses:
+    Error:
+      description: Error. Códigos habituales 400 `validation_error`, 401 `unauthorized`, 403 `forbidden`, 404 `not_found`, 409 (`week_closed`, `conflict`), 429 `too_many_attempts`.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties: { code: { type: string }, message: { type: string } }
+    User:
+      type: object
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        name: { type: string }
+        role: { type: string, enum: [admin, employee] }
+        branchId: { type: integer, nullable: true }
+        active: { type: boolean }
+        mustChangePassword: { type: boolean }
+    Branch:
+      type: object
+      properties: { id: { type: integer }, name: { type: string }, active: { type: boolean } }
+    Group:
+      type: object
+      properties: { id: { type: integer }, name: { type: string }, sortOrder: { type: integer } }
+    Product:
+      type: object
+      properties:
+        id: { type: integer }
+        code: { type: integer }
+        name: { type: string }
+        groupId: { type: integer }
+        active: { type: boolean }
+    Change:
+      type: object
+      required: [productId, dayIndex]
+      properties:
+        productId: { type: integer }
+        dayIndex: { type: integer, minimum: 0, maximum: 5, description: "0 = lunes … 5 = sábado" }
+        entrada: { type: number, minimum: 0 }
+        salida: { type: number, minimum: 0 }
+        clientTs: { type: string, description: "Momento de la edición en el dispositivo (ISO). Gana la edición más reciente por celda." }
+paths:
+  /api/health:
+    get: { tags: [Sistema], summary: Estado del servicio, security: [], responses: { '200': { description: "{ status: ok, time }" } } }
+  /api/auth/login:
+    post:
+      tags: [Autenticación]
+      summary: Iniciar sesión (límite de 10 intentos fallidos / 15 min por IP)
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [username, password], properties: { username: { type: string }, password: { type: string } } } } }
+      responses:
+        '200': { description: "{ token, user }" }
+        '401': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /api/auth/me:
+    get: { tags: [Autenticación], summary: Usuario de la sesión, responses: { '200': { description: "{ user }" }, '401': { $ref: '#/components/responses/Error' } } }
+  /api/auth/change-password:
+    post:
+      tags: [Autenticación]
+      summary: Cambiar la propia clave (mínimo 8 caracteres)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [currentPassword, newPassword], properties: { currentPassword: { type: string }, newPassword: { type: string, minLength: 8 } } } } }
+      responses: { '200': { description: "{ ok, token, user }" }, '400': { $ref: '#/components/responses/Error' } }
+  /api/branches:
+    get: { tags: [Sucursales], summary: Listar sucursales (el empleado solo ve la suya), responses: { '200': { description: "{ branches }" } } }
+    post:
+      tags: [Sucursales]
+      summary: Crear sucursal (admin)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string } } } } } }
+      responses: { '201': { description: "{ branch }" }, '409': { $ref: '#/components/responses/Error' } }
+  /api/branches/{id}:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    get: { tags: [Sucursales], summary: Ver una sucursal, responses: { '200': { description: "{ branch }" }, '404': { $ref: '#/components/responses/Error' } } }
+    patch:
+      tags: [Sucursales]
+      summary: Renombrar o activar/desactivar (admin)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { name: { type: string }, active: { type: boolean } } } } } }
+      responses: { '200': { description: "{ branch }" } }
+  /api/users:
+    get: { tags: [Usuarios], summary: Listar usuarios (admin), responses: { '200': { description: "{ users }" } } }
+    post:
+      tags: [Usuarios]
+      summary: Crear usuario (admin). Queda obligado a cambiar la clave en el primer ingreso.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [username, name, password, role], properties: { username: { type: string }, name: { type: string }, password: { type: string, minLength: 8 }, role: { type: string, enum: [admin, employee] }, branchId: { type: integer, nullable: true } } } } }
+      responses: { '201': { description: "{ user }" }, '409': { $ref: '#/components/responses/Error' } }
+  /api/users/{id}:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    patch:
+      tags: [Usuarios]
+      summary: Editar usuario (admin). No puede desactivarse ni quitarse el rol admin a sí mismo.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { name: { type: string }, role: { type: string, enum: [admin, employee] }, branchId: { type: integer, nullable: true }, active: { type: boolean } } } } } }
+      responses: { '200': { description: "{ user }" } }
+  /api/users/{id}/reset-password:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    post:
+      tags: [Usuarios]
+      summary: Restablecer la clave de un usuario (admin)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [newPassword], properties: { newPassword: { type: string, minLength: 8 } } } } } }
+      responses: { '200': { description: "{ ok: true }" } }
+  /api/catalog:
+    get:
+      tags: [Catálogo]
+      summary: Grupos y productos (catálogo compartido)
+      parameters: [ { name: includeInactive, in: query, schema: { type: string, enum: ['1'] }, description: Solo admin } ]
+      responses: { '200': { description: "{ groups, products }" } }
+  /api/groups:
+    post:
+      tags: [Catálogo]
+      summary: Crear grupo (admin)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string }, sortOrder: { type: integer } } } } } }
+      responses: { '201': { description: "{ group }" } }
+  /api/groups/{id}:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    patch:
+      tags: [Catálogo]
+      summary: Editar grupo (admin)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { name: { type: string }, sortOrder: { type: integer } } } } } }
+      responses: { '200': { description: "{ group }" } }
+    delete: { tags: [Catálogo], summary: Eliminar grupo vacío (admin), responses: { '200': { description: "{ ok }" }, '409': { $ref: '#/components/responses/Error' } } }
+  /api/products:
+    post:
+      tags: [Catálogo]
+      summary: Crear producto (admin). Si se omite `code` se asigna el siguiente libre.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name, groupId], properties: { code: { type: integer }, name: { type: string }, groupId: { type: integer }, active: { type: boolean } } } } } }
+      responses: { '201': { description: "{ product }" }, '409': { $ref: '#/components/responses/Error' } }
+  /api/products/{id}:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    patch:
+      tags: [Catálogo]
+      summary: Editar o desactivar producto (admin)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { code: { type: integer }, name: { type: string }, groupId: { type: integer }, active: { type: boolean } } } } } }
+      responses: { '200': { description: "{ product }" } }
+    delete:
+      tags: [Catálogo]
+      summary: Eliminar producto sin movimientos (admin). Con historial solo se puede desactivar (409).
+      responses: { '200': { description: "{ ok }" }, '409': { $ref: '#/components/responses/Error' } }
+  /api/branches/{id}/weeks/current:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    get: { tags: [Semanas], summary: Semana vigente de la sucursal (se crea si no existe y se cierran las vencidas), responses: { '200': { description: "Vista de semana: días, productos, inicial, entradas, salidas y totales" } } }
+  /api/branches/{id}/weeks:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    get:
+      tags: [Semanas]
+      summary: Historial de semanas (paginado)
+      parameters: [ { name: limit, in: query, schema: { type: integer, default: 52, maximum: 200 } }, { name: offset, in: query, schema: { type: integer, default: 0 } } ]
+      responses: { '200': { description: "{ weeks, total }" } }
+  /api/weeks/{id}:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    get: { tags: [Semanas], summary: Vista completa de una semana, responses: { '200': { description: Vista de semana }, '404': { $ref: '#/components/responses/Error' } } }
+  /api/weeks/{id}/movements:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    put:
+      tags: [Semanas]
+      summary: Guardar entradas/salidas en lote (idempotente; última edición gana por celda según clientTs)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [changes], properties: { changes: { type: array, maxItems: 500, items: { $ref: '#/components/schemas/Change' } } } } } } }
+      responses: { '200': { description: "Vista de semana actualizada" }, '409': { $ref: '#/components/responses/Error' } }
+  /api/weeks/{id}/initial-stock:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    put:
+      tags: [Semanas]
+      summary: Editar stock inicial (admin, solo semana abierta)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { type: object, required: [productId, qty], properties: { productId: { type: integer }, qty: { type: number } } } } } } } } }
+      responses: { '200': { description: Vista de semana actualizada }, '409': { $ref: '#/components/responses/Error' } }
+  /api/branches/{id}/alerts:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    get: { tags: [Semanas], summary: Productos bajo su stock mínimo según el total del día vigente, responses: { '200': { description: "{ alerts }" } } }
+  /api/branches/{id}/min-stock:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    get: { tags: [Semanas], summary: Stock mínimo por producto, responses: { '200': { description: "{ items }" } } }
+    put:
+      tags: [Semanas]
+      summary: "Definir stock mínimo (admin). Con minQty null se quita."
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { type: object, required: [productId, minQty], properties: { productId: { type: integer }, minQty: { type: number, nullable: true } } } } } } } } }
+      responses: { '200': { description: "{ ok }" } }
+  /api/weeks/{id}/export.xlsx:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    get:
+      tags: [Excel]
+      summary: Descargar la semana en Excel (hojas Stock e Info)
+      responses: { '200': { description: Archivo .xlsx, content: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': { schema: { type: string, format: binary } } } } }
+  /api/weeks/{id}/import:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    post:
+      tags: [Excel]
+      summary: Importar un Excel exportado (cuerpo binario). Todo o nada; celdas vacías = 0; el stock inicial solo lo aplica el admin.
+      requestBody: { required: true, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+      responses: { '200': { description: "Resumen: celdas cambiadas, avisos" }, '400': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' } }
+  /api/reports/week-summary:
+    get: { tags: [Reportes], summary: Resumen de una semana por grupo y producto, parameters: [ { $ref: '#/components/parameters/weekId' } ], responses: { '200': { description: Resumen } } }
+  /api/reports/top-products:
+    get:
+      tags: [Reportes]
+      summary: Productos más vendidos (salidas) en las últimas N semanas
+      parameters: [ { $ref: '#/components/parameters/branchIdQ' }, { $ref: '#/components/parameters/weeksQ' }, { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } } ]
+      responses: { '200': { description: Ranking } }
+  /api/reports/trend:
+    get:
+      tags: [Reportes]
+      summary: Entradas y salidas por semana
+      parameters: [ { $ref: '#/components/parameters/branchIdQ' }, { $ref: '#/components/parameters/weeksQ' } ]
+      responses: { '200': { description: Serie semanal } }
+  /api/reports/compare-weeks:
+    get:
+      tags: [Reportes]
+      summary: Comparar dos semanas
+      parameters: [ { name: a, in: query, required: true, schema: { type: integer } }, { name: b, in: query, required: true, schema: { type: integer } } ]
+      responses: { '200': { description: Comparación por producto } }
+  /api/audit:
+    get:
+      tags: [Auditoría]
+      summary: Registro de actividad (admin). Fechas `from`/`to` en UTC (YYYY-MM-DD).
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+        - { name: userId, in: query, schema: { type: integer } }
+        - { name: branchId, in: query, schema: { type: integer } }
+        - { name: action, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses: { '200': { description: "{ items, total }" } }

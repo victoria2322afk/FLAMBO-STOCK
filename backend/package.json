@@ -1,0 +1,19 @@
+{
+  "name": "flambo-stock-backend",
+  "version": "1.0.0",
+  "description": "API de Flambo Stock (Node.js sin dependencias externas)",
+  "type": "module",
+  "main": "src/server.js",
+  "private": true,
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
+    "seed": "node --disable-warning=ExperimentalWarning src/seed.js",
+    "backup": "node --disable-warning=ExperimentalWarning scripts/backup.js",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 \"test/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {}
+}

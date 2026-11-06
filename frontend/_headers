@@ -1,0 +1,17 @@
+# Cabeceras para Netlify (también las respeta Cloudflare Pages).
+# IMPORTANTE: reemplazá https://TU-API.example.com por la dirección de tu API (la misma de config.js).
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://TU-API.example.com; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+
+# El service worker y la configuración tienen que revalidarse siempre para que las actualizaciones lleguen.
+/sw.js
+  Cache-Control: no-cache
+/config.js
+  Cache-Control: no-cache
+/index.html
+  Cache-Control: no-cache
+/manifest.webmanifest
+  Cache-Control: no-cache
